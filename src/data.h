@@ -5,7 +5,7 @@
 
 void add_password(struct yamlpwdata *data, struct pwitem *item);
 void print_password(struct yamlpwdata *data, struct pwitem *item, int print_user);
-void copy_password(struct yamlpwdata *data, struct pwitem *item);
+void copy_password(struct yamlpwdata *data, struct pwitem *item, int selcb);
 void print_entries(struct yamlpwdata *data);
 void print_info(struct yamlpwdata *data, struct pwitem *item);
 int init_pwdata(struct yamlpwdata *data, char *fname);

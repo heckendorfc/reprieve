@@ -154,12 +154,15 @@ void print_password(struct yamlpwdata *data, struct pwitem *item, int print_user
 #ifdef USE_X11
 #include "xsel.h"
 
-void copy_password(struct yamlpwdata *data, struct pwitem *item){
+void copy_password(struct yamlpwdata *data, struct pwitem *item, int selcb){
 	char *pw=return_password(data,&item);
 
-	printf("Copying password to primary X clipboard.\n");
+	if(selcb)
+		printf("Copying password to X clipboard.\n");
+	else
+		printf("Copying password to primary X selector.\n");
 
-	xsel_init();
+	xsel_init(selcb);
 	set_x11_selection((unsigned char *)pw);
 
 	while(*pw)*(pw++)=0;

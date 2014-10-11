@@ -106,6 +106,6 @@ typedef int HandleResult;
 #define DID_DELETE        (1<<2)
 
 void set_x11_selection (unsigned char * sel);
-void xsel_init();
+void xsel_init(int selcb);
 
 #endif

@@ -33,7 +33,7 @@ followed by the master password used to encrypt it.
 You may also provide the remote password on the command line
 using the -p option but this is unsafe and not recommended.
 
-Copy the password to the primary X clipboard:
+Copy the password to the primary X selector:
 
 	$ reprieve xpw -n github
 
@@ -45,7 +45,8 @@ Other options for retrieving plain text passwords:
 
 	* pw (print the password)
 	* upw (print username:password)
-	* xpw (copy the password directly to the primary X clipboard)
+	* xpw (copy the password directly to the primary X selector [middle-click])
+	* cbpw (copy the password directly to the X clipboard [C-v])
 
 List basic information about the available password entries:
 

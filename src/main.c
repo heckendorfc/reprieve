@@ -10,7 +10,7 @@ void usage(char *name){
 	char *extra="";
 
 #ifdef USE_X11
-	extra=", xpw";
+	extra=", xpw, cbpw";
 #endif
 
 	printf("%s {list, info, add, rm, pw, upw%s} [-n name] [-l location] [-u username] [-p password]\n",name,extra);
@@ -73,7 +73,9 @@ int main(int argc, char **argv){
 		print_password(&data,&item,1);
 #ifdef USE_X11
 	else if(strcmp(argv[1],"xpw")==0)
-		copy_password(&data,&item);
+		copy_password(&data,&item,0);
+	else if(strcmp(argv[1],"cbpw")==0)
+		copy_password(&data,&item,1);
 #endif
 	else
 		usage(argv[0]);

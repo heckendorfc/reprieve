@@ -53,6 +53,7 @@ static long max_req;
 /* Our timestamp for all operations */
 static Time timestamp;
 
+static Atom glob_sel;
 static Atom timestamp_atom; /* The TIMESTAMP atom */
 static Atom multiple_atom; /* The MULTIPLE atom */
 static Atom targets_atom; /* The TARGETS atom */
@@ -1675,7 +1676,7 @@ set_selection (Atom selection, unsigned char * sel)
 {
 #endif
 void set_x11_selection (unsigned char * sel) {
-	Atom selection = XA_PRIMARY;
+	Atom selection = glob_sel;
   XEvent event;
   IncrTrack * it;
 
@@ -1686,23 +1687,18 @@ void set_x11_selection (unsigned char * sel) {
 
     switch (event.type) {
     case SelectionClear:
-		print_debug(4,"%s","clr");
       if (event.xselectionclear.selection == selection) return;
       break;
     case SelectionRequest:
-		print_debug(4,"%s","req");
       if (event.xselectionrequest.selection != selection) break;
 
       if (do_follow)
         sel = read_input (sel, True);
 
       if (!handle_selection_request (event, sel)) return;
-	  //sleep(1);
-	  //return;
 
       break;
     case PropertyNotify:
-		print_debug(4,"%s","not");
       if (event.xproperty.state != PropertyDelete) break;
 
       it = find_incrtrack (event.xproperty.atom);
@@ -1713,7 +1709,6 @@ void set_x11_selection (unsigned char * sel) {
 
       break;
     default:
-		print_debug(4,"%s","oth");
       break;
     }
   }
@@ -2095,9 +2090,10 @@ main(int argc, char *argv[])
     exit_err ("stdout: Is a directory\n");
   }
 #endif
-void xsel_init(){
+void xsel_init(int selcb){
   Window root;
-  Atom selection = XA_PRIMARY, test_atom;
+  glob_sel = XA_PRIMARY;
+  Atom test_atom;
   int black;
   int i, s=0;
   long timeout_ms = 0L;
@@ -2196,7 +2192,11 @@ void xsel_init(){
    */
   compound_text_atom = XInternAtom (display, "COMPOUND_TEXT", False);
 
+	if(selcb)
+		glob_sel = XInternAtom (display, "CLIPBOARD", False);
+
 }
+
 #if 0
   /* handle selection keeping and exit if so */
   if (do_keep) {
