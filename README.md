@@ -9,8 +9,8 @@ Building
 --------
 
 Note: in addition to OpenSSL's libcrypto, this software requires
-libyaml and libyaml-dom (http://gitub.com/heckendorfc/libyaml-dom).
-If building with optional X11 support, libx11 is also needed.
+libyaml and libyamldom (http://gitub.com/heckendorfc/libyaml-dom).
+If building with optional X11 support, libX11 is also needed.
 
 	$ mkdir build && cd build
 	$ cmake ..
