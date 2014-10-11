@@ -6,6 +6,7 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <termios.h>
 #include <stdint.h>
 #include <pwd.h>
 #include "io/io_data.h"
@@ -62,29 +63,64 @@ struct pwitem* find_entry(struct yamlpwdata *data, struct pwitem *item){
 	return NULL;
 }
 
+char *getpassword(const char *prompt){
+	const int maxlen=128;
+	char *ret=malloc(maxlen);
+	int i;
+	struct termios orig,noecho;
+
+	if(!ret)
+		exit(1);
+
+	tcgetattr(0,&orig);
+	tcgetattr(0,&noecho);
+	noecho.c_lflag&=(~ECHO);
+	tcsetattr(0,TCSANOW,&noecho);
+
+	printf("%s",prompt);
+	if(!fgets(ret,maxlen,stdin)){
+		fprintf(stderr,"Password read error\n");
+		free(ret);
+		tcsetattr(0,TCSANOW,&orig);
+		exit(1);
+	}
+
+	for(i=0;i<maxlen-1 && ret[i] && ret[i]!='\n';i++);
+	ret[i]=0;
+
+	tcsetattr(0,TCSANOW,&orig);
+	putchar('\n');
+
+	return ret;
+}
+
 void add_password(struct yamlpwdata *data, struct pwitem *item){
 	char *pw;
 	char *rpw=NULL;
+	char *mpw=NULL;
 
 	if(item->pass==NULL){
-		pw=getpass("Remote password: ");
-		rpw=item->pass=strdup(pw);
-		while(*pw)*(pw++)=0;
+		pw=getpassword("Remote password: ");
+		rpw=item->pass=pw;
+		//rpw=item->pass=strdup(pw);
+		//while(*pw)*(pw++)=0;
 	}
 
-	pw=getpass("Master password: ");
+	mpw=pw=getpassword("Master password: ");
 
 	append_data_item(data,item,pw);
 	while(*pw)*(pw++)=0;
 
 	if(rpw)
 		free(rpw);
+	free(mpw);
 
 	write_data(data);
 }
 
 char* return_password(struct yamlpwdata *data, struct pwitem **item){
-	char *pw;
+	char *tpw,*pw;
+	char *ret;
 
 	if((*item=find_entry(data,*item))==NULL){
 		fprintf(stderr,"No entry found.\n");
@@ -92,9 +128,14 @@ char* return_password(struct yamlpwdata *data, struct pwitem **item){
 		return NULL;
 	}
 
-	pw=getpass("Master password: ");
+	tpw=pw=getpassword("Master password: ");
 
-	return (char*)get_password(*item,pw);
+	ret=(char*)get_password(*item,pw);
+
+	while(*pw)*(pw++)=0;
+	free(tpw);
+
+	return ret;
 }
 
 void print_password(struct yamlpwdata *data, struct pwitem *item, int print_user){
