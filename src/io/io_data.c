@@ -1,5 +1,6 @@
 /* Copyright 2014, Heckendorf */
 
+#include <stdint.h>
 #include <time.h>
 #include <sys/types.h>
 #include <unistd.h>
