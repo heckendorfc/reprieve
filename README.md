@@ -42,6 +42,7 @@ automatically (removing the password from the clipboard) once the
 password has been pasted.
 
 Other options for retrieving plain text passwords:
+
 	* pw (print the password)
 	* upw (print username:password)
 	* xpw (copy the password directly to the primary X clipboard)
