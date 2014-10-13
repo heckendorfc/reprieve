@@ -112,6 +112,7 @@ unsigned char* do_crypt(const unsigned char *data, const int dlen, const char *p
 	if(!PKCS5_PBKDF2_HMAC(pw,strlen(pw),NULL,0,1024,EVP_sha1(),ENC_KEY_SIZE,genkey)){
 		fprintf(stderr,"Key gen failed\n");
 		EVP_CIPHER_CTX_cleanup(&ctx);
+		exit(1);
 		return NULL;
 	}
 
@@ -120,11 +121,13 @@ unsigned char* do_crypt(const unsigned char *data, const int dlen, const char *p
 	if(!EVP_CipherUpdate(&ctx, out, &outlen, data , dlen)){
 		fprintf(stderr,"CipherUpdate failed\n");
 		EVP_CIPHER_CTX_cleanup(&ctx);
+		exit(1);
 		return NULL;
 	}
 	if(!EVP_CipherFinal_ex(&ctx, out+outlen, &finallen)){
-		fprintf(stderr,"CipherFinal failed\n");
+		fprintf(stderr,"CipherFinal failed. Invalid Password?\n");
 		EVP_CIPHER_CTX_cleanup(&ctx);
+		exit(1);
 		return NULL;
 	}
 
