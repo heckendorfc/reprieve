@@ -96,6 +96,7 @@ char *getpassword(const char *prompt){
 
 void add_password(struct yamlpwdata *data, struct pwitem *item){
 	char *pw;
+	char *pw2;
 	char *rpw=NULL;
 	char *mpw=NULL;
 
@@ -107,12 +108,25 @@ void add_password(struct yamlpwdata *data, struct pwitem *item){
 	}
 
 	mpw=pw=getpassword("Master password: ");
+	pw2=getpassword("Confirm password: ");
+
+	if(strcmp(pw,pw2)){
+		fprintf(stderr,"Passwords do not match.\n");
+		while(*pw)*(pw++)=0;
+		pw=pw2;
+		while(*pw)*(pw++)=0;
+		free(pw2);
+		free(mpw);
+	}
 
 	append_data_item(data,item,pw);
 	while(*pw)*(pw++)=0;
 
-	if(rpw)
+	if(rpw){
+		pw=rpw;
+		while(*pw)*(pw++)=0;
 		free(rpw);
+	}
 	free(mpw);
 
 	write_data(data);
