@@ -117,6 +117,7 @@ void add_password(struct yamlpwdata *data, struct pwitem *item){
 		while(*pw)*(pw++)=0;
 		free(pw2);
 		free(mpw);
+		return;
 	}
 
 	append_data_item(data,item,pw);
