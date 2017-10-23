@@ -34,6 +34,9 @@ src/io/io_common.c
 src/io/io_config.c
 src/io/io_data.c
 src/io/io_setup.c
+src/oath/base32.c
+src/oath/totp.c
+src/oath/hmac.c
 )
 
 add_executable(reprieve ${SRC_FILES} ${EXTRA_SRC})

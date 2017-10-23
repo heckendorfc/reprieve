@@ -10,6 +10,8 @@ struct pwitem{
 	char *user;
 	char *pass;
 	char *iv;
+	char *oath;
+	char *oathiv;
 };
 
 struct pwdata{
@@ -28,6 +30,7 @@ struct yamldata{
 struct yamlpwdata{
 	struct yamldata yaml;
 	struct pwdata data;
+	int valid;
 };
 
 struct yamlconfig{

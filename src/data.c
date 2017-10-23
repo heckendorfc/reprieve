@@ -1,4 +1,4 @@
-/* Copyright 2014, Heckendorf */
+/* Copyright 2017, Heckendorf */
 
 #include <sys/stat.h>
 #include <stdlib.h>
@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include <pwd.h>
 #include "io/io_data.h"
+#include "oath/totp.h"
 
 #define EZMATCH(ret,temp,field) entry_matches(ret,temp->field,offsetof(struct pwitem,field))
 
@@ -133,9 +134,10 @@ void add_password(struct yamlpwdata *data, struct pwitem *item){
 	write_data(data);
 }
 
-char* return_password(struct yamlpwdata *data, struct pwitem **item){
-	char *tpw,*pw;
+char* return_password(struct yamlpwdata *data, struct pwitem **item, char **master){
+	char *tpw,*pw = NULL;
 	char *ret;
+	int len;
 
 	if((*item=find_entry(data,*item))==NULL){
 		fprintf(stderr,"No entry found.\n");
@@ -143,9 +145,38 @@ char* return_password(struct yamlpwdata *data, struct pwitem **item){
 		return NULL;
 	}
 
-	tpw=pw=getpassword("Master password: ");
+	if(master)
+		pw = *master;
 
-	ret=(char*)get_password(*item,pw);
+	if(pw == NULL)
+		*master=tpw=pw=getpassword("Master password: ");
+
+	ret=(char*)get_password(*item,pw,&len);
+
+	if(master == NULL){
+		while(*pw)*(pw++)=0;
+		free(tpw);
+	}
+
+	return ret;
+}
+
+char* return_master_password(struct yamlpwdata *data, struct pwitem **item){
+	char *tpw,*pw;
+	char *ret;
+	int len;
+
+	if((*item=find_entry(data,*item))==NULL){
+		fprintf(stderr,"No entry found.\n");
+		cleanup_data(data);
+		return NULL;
+	}
+
+	ret=getpassword("Master password: ");
+
+	tpw=pw=(char*)get_password(*item,ret,&len);
+	if(pw==NULL)
+		return NULL;
 
 	while(*pw)*(pw++)=0;
 	free(tpw);
@@ -153,25 +184,83 @@ char* return_password(struct yamlpwdata *data, struct pwitem **item){
 	return ret;
 }
 
-void print_password(struct yamlpwdata *data, struct pwitem *item, int print_user){
-	char *pw=return_password(data,&item);
+void add_oath(struct yamlpwdata *data, struct pwitem *item){
+	struct pwitem *dbitem;
+	char *code;
+	char *pw=NULL;
+	char *tpw, *tmp;
 
+	dbitem = item;
+	tmp=tpw=return_password(data,&dbitem,&pw);
+	while(*tmp)*(tmp++)=0;
+	free(tpw);
+
+	if(pw==NULL)
+		return;
+
+	if(item->pass==NULL){
+		item->pass=getpassword("OATH Code: ");
+	}
+	item->oath = item->pass;
+
+	add_oath_item(data,item,pw);
+
+	pw=item->pass;
+	while(*pw)*(pw++)=0;
+
+	write_data(data);
+}
+
+void print_oath_token(struct yamlpwdata *data, struct pwitem *item, char *mpw){
+	char *pw=NULL,*tmp,*tpw;
+	char *code;
+	char ret[10]; // actually 6+1 needed
+	int len,i;
+
+	if(mpw)
+		pw=mpw;
+	else{
+		if((tmp=tpw=return_password(data,&item,&pw))){
+			while(*tmp)*(tmp++)=0;
+			free(tpw);
+		} else
+			return;
+	}
+
+	code = (char*)get_oath_code(item,pw,&len);
+	tmp=item->pass;
+	while(*tmp)*(tmp++)=0;
+	if(mpw == NULL){
+		tmp=pw;
+		while(*tmp)*(tmp++)=0;
+	}
+
+	if(oath_totp_generate(code,len,30,6,ret)){
+		fprintf(stderr,"OATH error!\n");
+		return;
+	}
+
+	printf("OATH Token: %s\n",ret);
+
+	tmp=code; 
+	for(i=0;i<len;i++)tmp[i]=0;
+	tmp=ret;
+	while(*tmp)*(tmp++)=0;
+
+	cleanup_data(data);
+}
+
+void print_password(struct pwitem *item, char *pw, int print_user){
 	if(print_user)
 		printf("%s:%s\n",item->user,pw);
 	else
 		printf("%s\n",pw);
-
-	while(*pw)*(pw++)=0;
-
-	cleanup_data(data);
 }
 
 #ifdef USE_X11
 #include "xsel.h"
 
-void copy_password(struct yamlpwdata *data, struct pwitem *item, int selcb){
-	char *pw=return_password(data,&item);
-
+void copy_password(struct pwitem *item, char *pw, int selcb){
 	if(selcb)
 		printf("Copying password to X clipboard.\n");
 	else
@@ -179,12 +268,35 @@ void copy_password(struct yamlpwdata *data, struct pwitem *item, int selcb){
 
 	xsel_init(selcb);
 	set_x11_selection((unsigned char *)pw);
+}
+#endif
 
-	while(*pw)*(pw++)=0;
+void generic_use_password(struct yamlpwdata *data, struct pwitem *item, int flag, void(*cb)(struct pwitem*,char*,int)){
+	char *tmp,*pw,*mpw=NULL;
+
+	pw = return_password(data,&item,&mpw);
+	if(mpw && (item->oath == NULL || !*item->oath)){
+		tmp=mpw;
+		while(*tmp)*(tmp++)=0;
+		free(mpw);
+		mpw=NULL;
+	}
+
+	cb(item,pw,flag);
+
+	if(mpw)
+		print_oath_token(data,item,mpw);
+
+	tmp=pw;
+	while(*tmp)*(tmp++)=0;
+	if(mpw){
+		tmp=mpw;
+		while(*tmp)*(tmp++)=0;
+		free(mpw);
+	}
 
 	cleanup_data(data);
 }
-#endif
 
 void print_entries(struct yamlpwdata *data){
 	struct pwitem *e;

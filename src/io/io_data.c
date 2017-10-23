@@ -1,4 +1,4 @@
-/* Copyright 2014, Heckendorf */
+/* Copyright 2017, Heckendorf */
 
 #include <stdint.h>
 #include <time.h>
@@ -137,19 +137,27 @@ unsigned char* do_crypt(const unsigned char *data, const int dlen, const char *p
 	return out;
 }
 
-unsigned char* get_password(struct pwitem *item,const char *pw){
+unsigned char* decrypt_yaml(unsigned char *iv, unsigned char *pass, const char *pw, int *dlen){
 	unsigned char *out;
 	unsigned char ivout[ENC_IV_SIZE+1];
 	int len;
 
-	base64_decode((unsigned char*)item->iv,ivout,strlen(item->iv));
+	base64_decode(iv,ivout,strlen((char*)iv));
 	ivout[ENC_IV_SIZE]=0;
 
-	len=strlen(item->pass);
+	len=strlen((char*)pass);
 	out=malloc(len);
-	len=base64_decode((unsigned char*)item->pass,out,len);
+	len=base64_decode(pass,out,len);
 
-	return do_crypt(out,len,pw,ivout,0,&len);
+	return do_crypt(out,len,pw,ivout,0,dlen);
+}
+
+unsigned char* get_password(struct pwitem *item,const char *pw, int *len){
+	return decrypt_yaml((unsigned char*)item->iv,(unsigned char*)item->pass,pw,len);
+}
+
+unsigned char* get_oath_code(struct pwitem *item,const char *pw, int *len){
+	return decrypt_yaml((unsigned char*)item->oathiv,(unsigned char*)item->oath,pw,len);
 }
 
 // Robert Jenkins' 96 bit Mix Function
@@ -198,31 +206,39 @@ char* gen_iv(){
 	return (char*)out;
 }
 
-void set_password(struct pwitem *item,const char *pw){
+void encode_yaml_pass(char **pass, char **iv,const char *pw){
 	unsigned char *bout,*out64;
 	unsigned char *biv;
 	int len,ivlen,i;
 
-	item->iv=gen_iv();
-	ivlen=strlen(item->iv);
+	*iv=gen_iv();
+	ivlen=strlen(*iv);
 	biv=malloc(ivlen);
-	if(base64_decode((unsigned char*)item->iv,biv,ivlen)!=ENC_IV_SIZE){
+	if(base64_decode((unsigned char*)*iv,biv,ivlen)!=ENC_IV_SIZE){
 		fprintf(stderr,"IV decode error\n");
 		exit(1);
 	}
 
-	len=strlen(item->pass)+1;
+	len=strlen(*pass)+1;
 	bout=malloc(len);
 
-	bout=do_crypt((unsigned char*)item->pass,len,pw,biv,1,&len);
-	for(i=0;item->pass[i];i++)
-		item->pass[i]=0;
+	bout=do_crypt((unsigned char*)*pass,len,pw,biv,1,&len);
+	for(i=0;(*pass)[i];i++)
+		(*pass)[i]=0;
 
 	out64=malloc((len*4/3)+5);
 
 	len=base64_encode(bout,out64,len);
 	out64[len]=0;
-	item->pass=(char*)out64;
+	*pass=(char*)out64;
+}
+
+void set_password(struct pwitem *item,const char *pw){
+	encode_yaml_pass(&item->pass,&item->iv,pw);
+}
+
+void set_oath(struct pwitem *item,const char *pw){
+	encode_yaml_pass(&item->oath,&item->oathiv,pw);
 }
 
 void parse_data(struct yamlpwdata *data){
@@ -235,7 +251,7 @@ void parse_data(struct yamlpwdata *data){
 
 	for(tmp=YAMLDOM_SEQ_NODES(data->yaml.root);tmp;tmp=tmp->next){
 		tmppwi=data->data.items;
-		data->data.items=malloc(sizeof(*data->data.items));
+		data->data.items=calloc(1,sizeof(*data->data.items));
 		data->data.items->next=tmppwi;
 		tmppwi=data->data.items;
 
@@ -250,6 +266,10 @@ void parse_data(struct yamlpwdata *data){
 				tmppwi->pass=YAMLDOM_SCALAR_DATA(nodes->next)->val;
 			else if(strcmp(YAMLDOM_SCALAR_DATA(nodes)->val,"iv")==0)
 				tmppwi->iv=YAMLDOM_SCALAR_DATA(nodes->next)->val;
+			else if(strcmp(YAMLDOM_SCALAR_DATA(nodes)->val,"oath")==0)
+				tmppwi->oath=YAMLDOM_SCALAR_DATA(nodes->next)->val;
+			else if(strcmp(YAMLDOM_SCALAR_DATA(nodes)->val,"oathiv")==0)
+				tmppwi->oathiv=YAMLDOM_SCALAR_DATA(nodes->next)->val;
 		}
 	}
 }
@@ -272,6 +292,7 @@ void init_data(struct yamlpwdata *data, FILE *infd, FILE *outfd){
 	}
 
 	parse_data(data);
+	data->valid = 1;
 }
 
 void append_data_item(struct yamlpwdata *data, struct pwitem *item, char *pw){
@@ -313,7 +334,57 @@ void append_data_item(struct yamlpwdata *data, struct pwitem *item, char *pw){
 	YAMLDOM_SEQ_NODES(data->yaml.root)=yamldom_append_node(YAMLDOM_SEQ_NODES(data->yaml.root),mapr);
 }
 
+int check_mapval(yamldom_node_t *map, char *field, char *val){
+	yamldom_node_t *tmp;
+
+	if(val==NULL)
+		return 1;
+
+	if((tmp=yamldom_find_map_val(map,field)) &&
+		strcmp(YAMLDOM_SCALAR_DATA(tmp)->val,val)==0)
+		return 1;
+
+	return 0;
+}
+
+int add_oath_item(struct yamlpwdata *data, struct pwitem *item, char *pw){
+	yamldom_node_t *nodes,*tmp,*mapr;
+
+	set_oath(item,pw);
+
+	for(nodes=YAMLDOM_SEQ_NODES(data->yaml.root);nodes;nodes=nodes->next){
+		if(check_mapval(nodes,"name",item->name) && 
+			check_mapval(nodes,"location",item->location) && 
+			check_mapval(nodes,"user",item->user))
+			break;
+	}
+
+	if(nodes==NULL)
+		return 1;
+
+	mapr = nodes;
+	nodes = YAMLDOM_MAP_NODES(mapr);
+
+	tmp=yamldom_make_scalar(NULL,"oath",-1);
+	nodes=yamldom_append_node(nodes,tmp);
+	tmp=yamldom_make_scalar(NULL,item->oath,-1);
+	nodes=yamldom_append_node(nodes,tmp);
+
+	tmp=yamldom_make_scalar(NULL,"oathiv",-1);
+	nodes=yamldom_append_node(nodes,tmp);
+	tmp=yamldom_make_scalar(NULL,item->oathiv,-1);
+	nodes=yamldom_append_node(nodes,tmp);
+
+	YAMLDOM_MAP_NODES(mapr)=nodes;
+
+	return 0;
+}
+
 void cleanup_data(struct yamlpwdata *data){
+	if(!data->valid)
+		return;
+
+	data->valid = 0;
 	io_general_close(&data->yaml.ydd);
 
 	yamldom_free_nodes(data->yaml.root);

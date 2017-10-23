@@ -13,7 +13,7 @@ void usage(char *name){
 	extra=", xpw, cbpw";
 #endif
 
-	printf("%s {list, info, add, rm, pw, upw%s} [-n name] [-l location] [-u username] [-p password]\n",name,extra);
+	printf("%s {list, info, add, rm, pw, upw, addoath, oath%s} [-n name] [-l location] [-u username] [-p password]\n",name,extra);
 }
 
 int main(int argc, char **argv){
@@ -61,6 +61,10 @@ int main(int argc, char **argv){
 		print_entries(&data);
 	else if(strcmp(argv[1],"info")==0)
 		print_info(&data,&item);
+	else if(strcmp(argv[1],"addoath")==0){
+		changed=1;
+		add_oath(&data,&item);
+	}
 	else if(strcmp(argv[1],"add")==0){
 		changed=1;
 		add_password(&data,&item);
@@ -68,14 +72,16 @@ int main(int argc, char **argv){
 	else if(strcmp(argv[1],"rm")==0)
 		changed=1;
 	else if(strcmp(argv[1],"pw")==0)
-		print_password(&data,&item,0);
+		generic_use_password(&data,&item,0,print_password);
 	else if(strcmp(argv[1],"upw")==0)
-		print_password(&data,&item,1);
+		generic_use_password(&data,&item,1,print_password);
+	else if(strcmp(argv[1],"oath")==0)
+		print_oath_token(&data,&item,NULL);
 #ifdef USE_X11
 	else if(strcmp(argv[1],"xpw")==0)
-		copy_password(&data,&item,0);
+		generic_use_password(&data,&item,0,copy_password);
 	else if(strcmp(argv[1],"cbpw")==0)
-		copy_password(&data,&item,1);
+		generic_use_password(&data,&item,1,copy_password);
 #endif
 	else
 		usage(argv[0]);
