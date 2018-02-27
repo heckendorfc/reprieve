@@ -287,7 +287,8 @@ void init_data(struct yamlpwdata *data, FILE *infd, FILE *outfd){
 	data->yaml.anchors=NULL;
 	if(infd)
 		data->yaml.root=yamldom_gen(&data->yaml.ydd,NULL); // Second argument is optional (anchors).
-	else{
+
+	if(!infd || data->yaml.root==NULL){
 		data->yaml.root=yamldom_make_seq(NULL);
 	}
 
