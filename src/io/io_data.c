@@ -101,37 +101,37 @@ unsigned char* do_crypt(const unsigned char *data, const int dlen, const char *p
 	int outlen,finallen;
 	unsigned char *out=malloc(dlen+ENC_BLOCK_SIZE);
 	unsigned char genkey[ENC_KEY_SIZE];
-	EVP_CIPHER_CTX ctx;
+	EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
 
-	EVP_CIPHER_CTX_init(&ctx);
-	EVP_CipherInit_ex(&ctx, ENC_FUNCTION, NULL, NULL, NULL, do_encrypt);
-	EVP_CIPHER_CTX_set_padding(&ctx,1);
-	OPENSSL_assert(EVP_CIPHER_CTX_key_length(&ctx) == ENC_KEY_SIZE);
-	OPENSSL_assert(EVP_CIPHER_CTX_iv_length(&ctx) == ENC_IV_SIZE);
+	EVP_CIPHER_CTX_init(ctx);
+	EVP_CipherInit_ex(ctx, ENC_FUNCTION, NULL, NULL, NULL, do_encrypt);
+	EVP_CIPHER_CTX_set_padding(ctx,1);
+	OPENSSL_assert(EVP_CIPHER_CTX_key_length(ctx) == ENC_KEY_SIZE);
+	OPENSSL_assert(EVP_CIPHER_CTX_iv_length(ctx) == ENC_IV_SIZE);
 
 	if(!PKCS5_PBKDF2_HMAC(pw,strlen(pw),NULL,0,1024,EVP_sha1(),ENC_KEY_SIZE,genkey)){
 		fprintf(stderr,"Key gen failed\n");
-		EVP_CIPHER_CTX_cleanup(&ctx);
+		EVP_CIPHER_CTX_free(ctx);
 		exit(1);
 		return NULL;
 	}
 
-	EVP_CipherInit_ex(&ctx, NULL, NULL, genkey, iv, do_encrypt);
+	EVP_CipherInit_ex(ctx, NULL, NULL, genkey, iv, do_encrypt);
 
-	if(!EVP_CipherUpdate(&ctx, out, &outlen, data , dlen)){
+	if(!EVP_CipherUpdate(ctx, out, &outlen, data , dlen)){
 		fprintf(stderr,"CipherUpdate failed\n");
-		EVP_CIPHER_CTX_cleanup(&ctx);
+		EVP_CIPHER_CTX_free(ctx);
 		exit(1);
 		return NULL;
 	}
-	if(!EVP_CipherFinal_ex(&ctx, out+outlen, &finallen)){
+	if(!EVP_CipherFinal_ex(ctx, out+outlen, &finallen)){
 		fprintf(stderr,"CipherFinal failed. Invalid Password?\n");
-		EVP_CIPHER_CTX_cleanup(&ctx);
+		EVP_CIPHER_CTX_free(ctx);
 		exit(1);
 		return NULL;
 	}
 
-	EVP_CIPHER_CTX_cleanup(&ctx);
+	EVP_CIPHER_CTX_free(ctx);
 
 	*olen=outlen+finallen;
 	return out;
