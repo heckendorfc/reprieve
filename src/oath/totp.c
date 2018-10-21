@@ -4,6 +4,13 @@
 #include <string.h>
 #include <time.h>
 
+#if (defined(__gnu_linux__) || defined(__linux__) || defined(__linux) || defined(linux))
+#include <endian.h>
+#else
+//#if (defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__bsdi__) || defined(__DragonFly__))
+#include <sys/endian.h>
+#endif
+
 #include "hmac.h"
 #include "base32.h"
 
@@ -29,7 +36,7 @@ int otp(uint8_t *key, int keylen, unsigned int digits, uint64_t counter, uint32_
 	uint8_t *md;
 	size_t dlen;
 
-#ifdef __LITTLE_ENDIAN__
+#if __BYTE_ORDER == __LITTLE_ENDIAN
 	counter = (((uint64_t)htonl(counter))<<32) + htonl(counter>>32);
 #endif
 
