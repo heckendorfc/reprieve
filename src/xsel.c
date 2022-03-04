@@ -94,6 +94,9 @@ static int current_alloc = 0;
 
 static long timeout = 0;
 static struct itimerval timer;
+static struct itimerval zerot;
+
+#define USEC_PER_SEC 1000000
 
 static int saved_argc;
 static char ** saved_argv;
@@ -235,7 +238,8 @@ static char *
 get_atom_name (Atom atom)
 {
   char * ret;
-  static char atom_name[MAXLINE+1];
+  static char atom_name[MAXLINE+2];  /* unused extra char to avoid
+                                        string-op-truncation warning */
 
   if (atom == None) return "None";
   if (atom == XA_STRING) return "STRING";
@@ -251,7 +255,7 @@ get_atom_name (Atom atom)
   if (atom == utf8_atom) return "UTF8_STRING";
 
   ret = XGetAtomName (display, atom);
-  strncpy (atom_name, ret, sizeof (atom_name));
+  strncpy (atom_name, ret, MAXLINE+1);
   if (atom_name[MAXLINE] != '\0')
     {
       atom_name[MAXLINE-3] = '.';
@@ -330,51 +334,111 @@ static char *
 _xs_strncpy (char * dest, const char * src, size_t n)
 {
   if (n > 0) {
-    strncpy (dest, src, n);
+    strncpy (dest, src, n-1);
     dest[n-1] = '\0';
   }
   return dest;
 }
 
 /*
- * get_homedir ()
+ * get_xdg_cache_home ()
  *
- * Get the user's home directory.
+ * Get the user's cache directory
  */
 static char *
-get_homedir (void)
+get_xdg_cache_home (void)
 {
-  uid_t uid;
-  char * username, * homedir;
-  struct passwd * pw;
+  char * cachedir;
+  char * homedir;
+  static const char * slashbasename = "/.cache";
 
-  if ((homedir = getenv ("HOME")) != NULL) {
-    return homedir;
+  if ((cachedir = getenv ("XDG_CACHE_HOME")) == NULL) {
+    if ((homedir = getenv ("HOME")) == NULL) {
+      exit_err ("no HOME directory");
+    }
+    cachedir = xs_malloc (strlen (homedir) + strlen (slashbasename) + 1);
+    strcpy (cachedir, homedir);
+    strcat (cachedir, slashbasename);
+  } else {
+    cachedir = _xs_strdup (cachedir);
   }
 
-  /* else ... go hunting for it */
-  uid = getuid ();
+  mkdir (cachedir, S_IRWXU|S_IRGRP|S_IXGRP);
 
-  username = getenv ("LOGNAME");
-  if (!username) username = getenv ("USER");
-
-  if (username) {
-    pw = getpwnam (username);
-    if (pw && pw->pw_uid == uid) goto gotpw;
-  }
-
-  pw = getpwuid (uid);
-
-gotpw:
-
-  if (!pw) {
-    exit_err ("error retrieving passwd entry");
-  }
-
-  homedir = _xs_strdup (pw->pw_dir);
-
-  return homedir;
+  return cachedir;
 }
+
+/*
+ * The set of terminal signals we block while handling SelectionRequests.
+ *
+ * If we exit in the middle of handling a SelectionRequest, we might leave the
+ * requesting client hanging, so we try to be nice and finish handling
+ * requests before terminating.  Hence we block SIG{ALRM,INT,TERM} while
+ * handling requests and unblock them only while waiting in XNextEvent().
+ */
+static sigset_t exit_sigs;
+
+static void block_exit_sigs(void)
+{
+  sigprocmask (SIG_BLOCK, &exit_sigs, NULL);
+}
+
+static void unblock_exit_sigs(void)
+{
+  sigprocmask (SIG_UNBLOCK, &exit_sigs, NULL);
+}
+
+/* The jmp_buf to longjmp out of the signal handler */
+static sigjmp_buf env_alrm;
+
+/*
+ * alarm_handler (sig)
+ *
+ * Signal handler for catching SIGALRM.
+ */
+static void
+alarm_handler (int sig)
+{
+  siglongjmp (env_alrm, 1);
+}
+
+/*
+ * set_timer_timeout ()
+ *
+ * Set timer parameters according to specified timeout.
+ */
+static void
+set_timer_timeout (void)
+{
+  timer.it_interval.tv_sec = timeout / USEC_PER_SEC;
+  timer.it_interval.tv_usec = timeout % USEC_PER_SEC;
+  timer.it_value.tv_sec = timeout / USEC_PER_SEC;
+  timer.it_value.tv_usec = timeout % USEC_PER_SEC;
+}
+
+/*
+ * set_daemon_timeout ()
+ *
+ * Set up a timer to cause the daemon to exit after the desired
+ * amount of time.
+ */
+static void
+set_daemon_timeout (void)
+{
+  if (signal (SIGALRM, alarm_handler) == SIG_ERR) {
+    exit_err ("error setting timeout handler");
+  }
+
+  set_timer_timeout ();
+
+  if (sigsetjmp (env_alrm, 0) == 0) {
+    setitimer (ITIMER_REAL, &timer, (struct itimerval *)0);
+  } else {
+    print_debug (D_INFO, "daemon exiting after %d ms", timeout / 1000);
+    exit (0);
+  }
+}
+
 
 /*
  * become_daemon ()
@@ -389,18 +453,23 @@ become_daemon (void)
 {
   pid_t pid;
   int null_r_fd, null_w_fd, log_fd;
-  char * homedir;
+  char * cachedir;
 
-  if (no_daemon) return;
+  if (no_daemon) {
+	  /* If the user has specified a timeout, enforce it even if we don't
+	   * actually daemonize */
+	  set_daemon_timeout ();
+	  return;
+  }
 
-  homedir = get_homedir ();
+  cachedir = get_xdg_cache_home();
 
   /* Check that we can open a logfile before continuing */
 
   /* If the user has specified a --logfile, use that ... */
   if (logfile[0] == '\0') {
     /* ... otherwise use the default logfile */
-    snprintf (logfile, MAXFNAME, "%s/.xsel.log", homedir);
+    snprintf (logfile, MAXFNAME, "%s/xsel.log", cachedir);
   }
 
   /* Make sure to create the logfile with sane permissions */
@@ -428,8 +497,8 @@ become_daemon (void)
 
   umask (0);
 
-  if (chdir (homedir) == -1) {
-    print_debug (D_WARN, "Could not chdir to %s\n", homedir);
+  if (chdir (cachedir) == -1) {
+    print_debug (D_WARN, "Could not chdir to %s\n", cachedir);
     if (chdir ("/") == -1) {
       exit_err ("Error chdir to /");
     }
@@ -459,6 +528,10 @@ become_daemon (void)
   if (dup2 (log_fd, 2) == -1) {
     exit_err ("error duplicating logfile %s on stderr", logfile);
   }
+
+  set_daemon_timeout ();
+
+  free (cachedir);
 }
 
 /*
@@ -505,20 +578,6 @@ get_timestamp (void)
  * to the first XEvent.]
  */
 
-/* The jmp_buf to longjmp out of the signal handler */
-static sigjmp_buf env_alrm;
-
-/*
- * alarm_handler (sig)
- *
- * Signal handler for catching SIGVTALRM.
- */
-static void
-alarm_handler (int sig)
-{
-  siglongjmp (env_alrm, 1);
-}
-
 /*
  * get_append_property ()
  *
@@ -546,7 +605,8 @@ get_append_property (XSelectionEvent * xsl, unsigned char ** buffer,
 
   debug_property (D_TRACE, xsl->requestor, xsl->property, target, length);
 
-  if (target != XA_STRING && target != utf8_atom) {
+  if (target != XA_STRING && target != utf8_atom &&
+      target != compound_text_atom) {
     print_debug (D_OBSC, "target %s not XA_STRING nor UTF8_STRING in get_append_property()",
                  get_atom_name (target));
     free (*buffer);
@@ -557,14 +617,15 @@ get_append_property (XSelectionEvent * xsl, unsigned char ** buffer,
     print_debug (D_TRACE, "Got zero length property; end of INCR transfer");
     return False;
   } else if (format == 8) {
-    if (*offset + length > *alloc) {
-      *alloc = *offset + length;
+    if (*offset + length + 1 > *alloc) {
+      *alloc = *offset + length + 1;
       if ((*buffer = realloc (*buffer, *alloc)) == NULL) {
         exit_err ("realloc error");
       }
     }
     ptr = *buffer + *offset;
-    xs_strncpy (ptr, value, length);
+    memcpy (ptr, value, length);
+    ptr[length] = '\0';
     *offset += length;
     print_debug (D_TRACE, "Appended %d bytes to buffer\n", length);
   } else {
@@ -671,7 +732,7 @@ wait_selection (Atom selection, Atom request_target)
         } else if (target == incr_atom) {
           /* Handle INCR transfers */
           retval = wait_incr_selection (selection, &event.xselection,
-                                        *(int *)value);
+                                        *(long *)value);
           keep_waiting = False;
         } else if (target != utf8_atom && target != XA_STRING &&
                    target != compound_text_atom &&
@@ -702,7 +763,8 @@ wait_selection (Atom selection, Atom request_target)
   /* Now that we've received the SelectionNotify event, clear any
    * remaining timeout. */
   if (timeout > 0) {
-    setitimer (ITIMER_VIRTUAL, (struct itimerval *)0, (struct itimerval *)0);
+    // setitimer (ITIMER_REAL, (struct itimerval *)0, (struct itimerval *)0);
+    setitimer (ITIMER_REAL, &zerot, (struct itimerval *)0);
   }
 
   return retval;
@@ -729,17 +791,14 @@ get_selection (Atom selection, Atom request_target)
   XSync (display, False);
 
   if (timeout > 0) {
-    if (signal (SIGVTALRM, alarm_handler) == SIG_ERR) {
+    if (signal (SIGALRM, alarm_handler) == SIG_ERR) {
       exit_err ("error setting timeout handler");
     }
 
-    timer.it_interval.tv_sec = 0;
-    timer.it_interval.tv_usec = timeout;
-    timer.it_value.tv_sec = 0;
-    timer.it_value.tv_usec = timeout;
+    set_timer_timeout ();
 
     if (sigsetjmp (env_alrm, 0) == 0) {
-      setitimer (ITIMER_VIRTUAL, &timer, (struct itimerval *)0);
+      setitimer (ITIMER_REAL, &timer, (struct itimerval *)0);
       retval = wait_selection (selection, request_target);
     } else {
       print_debug (D_WARN, "selection timed out");
@@ -794,12 +853,12 @@ get_selection_text (Atom selection)
 static unsigned char *
 copy_sel (unsigned char * s)
 {
-  unsigned char * new_sel = NULL;
-
-  new_sel = xs_strdup (s);
-  current_alloc = total_input = xs_strlen (s);
-
-  return new_sel;
+  if (s) {
+    current_alloc = total_input = xs_strlen (s);
+    return xs_strdup (s);
+  }
+  current_alloc = total_input = 0;
+  return NULL;
 }
 
 /*
@@ -909,7 +968,7 @@ initialise_read (unsigned char * read_buffer)
   int insize = in_statbuf.st_blksize;
   unsigned char * new_buffer = NULL;
 
-  if (S_ISREG (in_statbuf.st_mode)) {
+  if (S_ISREG (in_statbuf.st_mode) && in_statbuf.st_size > 0) {
     current_alloc += in_statbuf.st_size;
   } else {
     current_alloc += insize;
@@ -1220,7 +1279,7 @@ change_property (Display * display, Window requestor, Atom property,
                  Atom selection, Time time, MultTrack * mparent)
 {
   XSelectionEvent ev;
-  int nr_bytes;
+  long nr_bytes;
   IncrTrack * it;
 
   print_debug (D_TRACE, "change_property ()");
@@ -1239,13 +1298,13 @@ change_property (Display * display, Window requestor, Atom property,
   print_debug (D_TRACE, "large data transfer");
 
 
-  /* Send a SelectionNotify event of type INCR */
+  /* Send a SelectionNotify event */
   ev.type = SelectionNotify;
   ev.display = display;
   ev.requestor = requestor;
   ev.selection = selection;
   ev.time = time;
-  ev.target = incr_atom; /* INCR */
+  ev.target = target;
   ev.property = property;
 
   XSelectInput (ev.display, ev.requestor, PropertyChangeMask);
@@ -1279,7 +1338,7 @@ change_property (Display * display, Window requestor, Atom property,
   it->chunk = MIN (it->max_elements, it->nelements - it->offset);
 
   /* Wait for that property to get deleted */
-  print_debug (D_TRACE, "Waiting on intial property deletion (%s)",
+  print_debug (D_TRACE, "Waiting on initial property deletion (%s)",
                get_atom_name (it->property));
 
   return HANDLE_INCOMPLETE;
@@ -1355,14 +1414,16 @@ handle_targets (Display * display, Window requestor, Atom property,
                 Atom selection, Time time, MultTrack * mparent)
 {
   Atom * targets_cpy;
+  HandleResult r;
 
   targets_cpy = malloc (sizeof (supported_targets));
   memcpy (targets_cpy, supported_targets, sizeof (supported_targets));
 
-  return
-    change_property (display, requestor, property, XA_ATOM, 32,
+  r = change_property (display, requestor, property, XA_ATOM, 32,
                      PropModeReplace, (unsigned char *)targets_cpy,
                      NUM_TARGETS, selection, time, mparent);
+  free(targets_cpy);
+  return r;
 }
 
 /*
@@ -1618,13 +1679,11 @@ handle_selection_request (XEvent event, unsigned char * sel)
     ev.property = xsr->property;
     hr = handle_string (ev.display, ev.requestor, ev.property, sel,
                         ev.selection, ev.time, NULL);
-	hr|=DID_DELETE;
   } else if (ev.target == utf8_atom) {
     /* Received UTF8_STRING request */
     ev.property = xsr->property;
     hr = handle_utf8_string (ev.display, ev.requestor, ev.property, sel,
                              ev.selection, ev.time, NULL);
-	hr|=DID_DELETE;
   } else if (ev.target == delete_atom) {
     /* Received DELETE request */
     ev.property = xsr->property;
@@ -1683,7 +1742,11 @@ void set_x11_selection (unsigned char * sel) {
   if (own_selection (selection) == False) return;
 
   for (;;) {
+    /* Flush before unblocking signals so we send replies before exiting */
+    XFlush (display);
+    unblock_exit_sigs ();
     XNextEvent (display, &event);
+    block_exit_sigs ();
 
     switch (event.type) {
     case SelectionClear:
@@ -1767,7 +1830,11 @@ set_selection_pair (unsigned char * sel_p, unsigned char * sel_s)
   }
 
   for (;;) {
+    /* Flush before unblocking signals so we send replies before exiting */
+    XFlush (display);
+    unblock_exit_sigs ();
     XNextEvent (display, &event);
+    block_exit_sigs ();
 
     switch (event.type) {
     case SelectionClear:
@@ -2099,11 +2166,17 @@ void xsel_init(int selcb){
   long timeout_ms = 0L;
   char * display_name = NULL;
 
+  zerot.it_value.tv_sec = 0;
+  zerot.it_value.tv_usec = 0;
+  zerot.it_interval.tv_sec = 0;
+  zerot.it_interval.tv_usec = 0;
+
   timeout = timeout_ms * 1000;
 
   display = XOpenDisplay (display_name);
   if (display==NULL) {
-    exit_err ("Can't open display: %s\n", display_name);
+    exit_err ("Can't open display: %s\n",
+              display_name ? display_name : "(null)");
   }
   root = XDefaultRootWindow (display);
 
@@ -2160,10 +2233,6 @@ void xsel_init(int selcb){
   supported_targets[s++] = incr_atom;
   NUM_TARGETS++;
 
-  /* Get the NULL atom */
-  null_atom = XInternAtom (display, "NULL", False);
-  NUM_TARGETS++;
-
   /* Get the TEXT atom */
   text_atom = XInternAtom (display, "TEXT", False);
   supported_targets[s++] = text_atom;
@@ -2186,11 +2255,19 @@ void xsel_init(int selcb){
               NUM_TARGETS, MAX_NUM_TARGETS);
   }
 
+  /* Get the NULL atom */
+  null_atom = XInternAtom (display, "NULL", False);
+
   /* Get the COMPOUND_TEXT atom.
    * NB. We do not currently serve COMPOUND_TEXT; we can retrieve it but
    * do not perform charset conversion.
    */
   compound_text_atom = XInternAtom (display, "COMPOUND_TEXT", False);
+
+  sigemptyset (&exit_sigs);
+  sigaddset (&exit_sigs, SIGALRM);
+  sigaddset (&exit_sigs, SIGINT);
+  sigaddset (&exit_sigs, SIGTERM);
 
 	if(selcb)
 		glob_sel = XInternAtom (display, "CLIPBOARD", False);
